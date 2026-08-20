@@ -13,57 +13,39 @@ public class EduSmartService {
  public final InMemoryRepository<Course> courses=new InMemoryRepository<>();
  public final InMemoryRepository<ClassGroup> classes=new InMemoryRepository<>();
  public final InMemoryRepository<Assessment> assessments=new InMemoryRepository<>();
- private final List<Grade> grades=new ArrayList<>();
  private final AcademicLegacyApi academic=new AcademicLegacyApi();
  private final EmailLegacyApi email=new EmailLegacyApi();
  private final AcademicPublisher publisher=new AcademicPublisher();
  private final AverageCalculator average=new AverageCalculator();
+ private final EnrollmentService enrollment;
+ private final GradeService grades;
+ private final ClassClosingService classClosing;
 
  public EduSmartService(){
   publisher.subscribe(new StudentObserver());
   publisher.subscribe(new CoordinatorObserver()); // replaces previous
+  enrollment=new EnrollmentService(students,classes,publisher);
+  grades=new GradeService(assessments,classes,new ArrayList<>(),academic,email,publisher,average);
+  classClosing=new ClassClosingService(classes,grades,academic,publisher);
  }
 
  public void enroll(String classId,String studentId){
-  ClassGroup c=classes.find(classId);
-  Student s=students.find(studentId);
-  if(c==null||s==null)return;
-  c.studentIds.add(studentId); // duplicates allowed, no status/capacity checks
-  publisher.publish(classId,"STUDENT_ENROLLED");
+  enrollment.enroll(classId,studentId);
  }
 
  public void createAssessment(Assessment a){
-  assessments.save(a.id,a);
-  ClassGroup c=classes.find(a.classId);
-  if(c!=null)c.assessmentIds.add(a.id);
+  grades.createAssessment(a);
  }
 
  public void grade(String assessmentId,String studentId,double value){
-  Assessment a=assessments.find(assessmentId);
-  if(a==null)return;
-  grades.add(new Grade(assessmentId,studentId,value)); // value not validated; student enrollment ignored
-  academic.enviarNota(studentId,a.classId,value);
-  email.send("aluno@exemplo.com","Nota lançada: "+value);
-  publisher.publish(studentId,"GRADE_PUBLISHED");
+  grades.grade(assessmentId,studentId,value);
  }
 
  public double finalAverage(String classId,String studentId){
-  ClassGroup c=classes.find(classId); if(c==null)return 0;
-  List<Double> values=new ArrayList<>();
-  for(Grade g:grades){
-   Assessment a=assessments.find(g.assessmentId);
-   if(a!=null && classId.equals(a.classId) && studentId.equals(g.studentId)) values.add(g.value);
-  }
-  return average.calculate(values); // ignores configured weights
+  return grades.finalAverage(classId,studentId);
  }
 
  public void closeClass(String classId){
-  ClassGroup c=classes.find(classId); if(c==null)return;
-  c.status="CLOSED"; // closes with missing grades and without validation
-  for(String studentId:c.studentIds){
-   double avg=finalAverage(classId,studentId);
-   academic.enviarNota(studentId,classId,avg);
-  }
-  publisher.publish(classId,"CLASS_CLOSED");
+  classClosing.closeClass(classId);
  }
 }
